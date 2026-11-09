@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Esquema RAW de Snowflake, poblado por el flow de Kestra f104_to_snowflake_raw."
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'PSET2_DB') }}"
+    schema: RAW
+    tables:
+      - name: raw_f104_ventas
+        description: "Formulario 104 (SRI): ventas por rama CIIU (46), mes fiscal y corte. Todo VARCHAR, append-only."
+        columns:
+          - name: mes_fiscal_id
+            tests: [not_null]
+          - name: tipo_corte
+            tests: [not_null]
+          - name: _loaded_at
+            tests: [not_null]

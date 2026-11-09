@@ -1,0 +1,17 @@
+# Perfil de dbt Core -> Snowflake. Todas las credenciales vienen del entorno (.env), nunca del repo.
+# Con dbt local:      cargar .env en el shell y correr dbt desde esta carpeta (DBT_PROFILES_DIR=.)
+# Con dbt en Docker:  docker compose --profile jobs run --rm dbt build
+pset2_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ACCOUNTADMIN') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'PSET2_DB') }}"
+      schema: BRONZE          # esquema por defecto; cada capa fija el suyo con +schema
+      threads: 4
+      client_session_keep_alive: false

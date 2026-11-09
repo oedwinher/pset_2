@@ -1,0 +1,128 @@
+version: 2
+
+models:
+  # ------------------------------------------------------------------ BRONZE
+  - name: stg_f104_ventas
+    description: "Bronze. F104 tipado, renombrado y deduplicado (ultimo registro por mes x rama x corte)."
+    columns:
+      - name: fecha_mes
+        data_tests: [not_null]
+      - name: tipo_corte
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['temprano_15d', 'definitivo']
+      - name: ventas_nominales_usd
+        data_tests:
+          - not_null
+          - non_negative
+      - name: num_declarantes
+        data_tests:
+          - non_negative
+
+  # ------------------------------------------------------------------ SILVER
+  - name: int_f104_ventas_limpias
+    description: "Silver. Nulos tratados, ventas reales (IPC simulado) e indicadores de coherencia economica."
+    columns:
+      - name: codigo_industria
+        data_tests: [not_null]
+      - name: fecha_mes
+        data_tests: [not_null]
+      - name: ventas_nominales_usd
+        data_tests: [not_null, non_negative]
+      - name: ventas_reales_usd
+        data_tests: [not_null, non_negative]
+      - name: indice_ipc_sim
+        data_tests:
+          - not_null
+          - value_between:
+              min_value: 50
+              max_value: 300
+      - name: ratio_temprano_definitivo
+        description: "Ventas corte temprano / ventas definitivas del mismo mes y rama (solo filas temprano)."
+        data_tests:
+          - value_between:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
+
+  # -------------------------------------------------------------------- GOLD
+  - name: dim_industria
+    description: "Dimension de las 46 ramas CIIU (CNT) con clasificacion por sector macro."
+    columns:
+      - name: codigo_industria
+        data_tests: [unique, not_null]
+      - name: nombre_industria
+        data_tests: [not_null]
+      - name: sector_macro
+        data_tests: [not_null]
+      - name: sector_economico
+        data_tests:
+          - accepted_values:
+              values: ['Primario', 'Secundario', 'Terciario']
+
+  - name: dim_tiempo
+    description: "Dimension mensual continua (anio, mes, trimestre, semestre)."
+    columns:
+      - name: tiempo_key
+        data_tests: [unique, not_null]
+      - name: fecha_mes
+        data_tests: [unique, not_null]
+      - name: mes
+        data_tests:
+          - value_between:
+              min_value: 1
+              max_value: 12
+      - name: trimestre
+        data_tests:
+          - value_between:
+              min_value: 1
+              max_value: 4
+      - name: semestre
+        data_tests:
+          - accepted_values:
+              values: [1, 2]
+              quote: false
+
+  - name: dim_corte
+    description: "Dimension del corte del F104 (temprano_15d vs definitivo)."
+    columns:
+      - name: corte_key
+        data_tests: [unique, not_null]
+      - name: tipo_corte
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              values: ['temprano_15d', 'definitivo']
+
+  - name: fct_ventas_mensuales
+    description: "Hechos. Grano: rama CIIU x mes fiscal x corte."
+    columns:
+      - name: venta_key
+        data_tests: [unique, not_null]
+      - name: codigo_industria
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_industria')
+              field: codigo_industria
+      - name: tiempo_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_tiempo')
+              field: tiempo_key
+      - name: corte_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_corte')
+              field: corte_key
+      - name: ventas_nominales_usd
+        data_tests: [not_null, non_negative]
+      - name: ventas_reales_usd
+        data_tests: [not_null, non_negative]
+      - name: num_declarantes
+        data_tests: [not_null, non_negative]

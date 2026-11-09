@@ -1,0 +1,3 @@
+# Solo para ejecucion local (python spark/build_obt.py). Dentro del cluster Docker, PySpark ya viene en la imagen.
+# Requiere ademas Java 17 (OpenJDK) instalado. El conector Snowflake se descarga via spark.jars.packages.
+pyspark==3.5.3

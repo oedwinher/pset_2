@@ -1,0 +1,31 @@
+# Secretos
+.env
+
+# Repositorio de referencia temporal
+repo_referencia/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Bases locales y temporales
+*.duckdb
+*.tmp
+*.log
+*.swp
+.DS_Store
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Spark
+spark/spark-warehouse/
+derby.log
+metastore_db/
+
+# Material del curso (no es parte del pipeline)
+material/

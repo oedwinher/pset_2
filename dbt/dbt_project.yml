@@ -1,0 +1,27 @@
+name: 'pset2_dbt'
+version: '1.0.0'
+config-version: 2
+profile: 'pset2_dbt'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Deflactor IPC SIMULADO (el IPC real del INEC no esta cargado en este PSet).
+  # indice_t = 100 * (1 + tasa_mensual) ^ (meses desde ipc_base_fecha)
+  ipc_base_fecha: '2018-01-01'
+  ipc_tasa_mensual: 0.0018   # ~2.2% anual
+
+models:
+  pset2_dbt:
+    staging:                  # Bronze
+      +schema: bronze
+      +materialized: table
+    intermediate:             # Silver
+      +schema: silver
+      +materialized: table
+    marts:                    # Gold (star schema)
+      +schema: gold
+      +materialized: table

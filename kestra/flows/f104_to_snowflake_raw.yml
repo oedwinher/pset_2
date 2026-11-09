@@ -1,0 +1,89 @@
+# Ingesta F104 (SRI) -> PSET2_DB.RAW.RAW_F104_VENTAS en Snowflake.
+# Despliegue: kestra/deploy.ps1 (Windows) o kestra/deploy.sh (Linux/Mac), que suben
+# el script y el CSV semilla como archivos del namespace y crean/actualizan este flow.
+
+id: f104_to_snowflake_raw
+namespace: ecuador.bce.coyuntura
+
+description: |
+  Carga cruda del Formulario 104 (ventas por 46 ramas CIIU, cortes temprano_15d y definitivo)
+  hacia Snowflake (RAW). Mensual, dia 15 a las 06:00 (America/Guayaquil).
+  Soporta backfill historico: cada ejecucion usa trigger.date (o execution.startDate si es manual)
+  como fecha de referencia para decidir que meses fiscales cargar.
+
+labels:
+  proyecto: nowcasting-ventas-sectoriales
+  capa: raw
+
+# Un backfill lanza muchas ejecuciones: se procesan de una en una para no saturar Snowflake.
+concurrency:
+  limit: 1
+  behavior: QUEUE
+
+inputs:
+  - id: modo
+    type: SELECT
+    displayName: Modo de carga
+    values: [completa, incremental]
+    defaults: completa
+  - id: reemplazar_raw
+    type: BOOL
+    displayName: Truncar RAW antes de cargar
+    defaults: false
+
+tasks:
+  - id: log_periodo
+    type: io.kestra.plugin.core.log.Log
+    message: "Procesando datos para {{ trigger.date ?? execution.startDate }} (modo={{ inputs.modo }})"
+
+  - id: cargar_raw
+    type: io.kestra.plugin.scripts.shell.Commands
+    containerImage: python:3.11-slim
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    namespaceFiles:
+      enabled: true
+      include:
+        - load_raw_f104.py
+        - f104_ventas_46_ramas.csv
+    env:
+      SNOWFLAKE_ACCOUNT: "{{ envs.snowflake_account }}"
+      SNOWFLAKE_USER: "{{ envs.snowflake_user }}"
+      SNOWFLAKE_PASSWORD: "{{ envs.snowflake_password }}"
+      SNOWFLAKE_ROLE: "{{ envs.snowflake_role }}"
+      SNOWFLAKE_WAREHOUSE: "{{ envs.snowflake_warehouse }}"
+      SNOWFLAKE_DATABASE: "{{ envs.snowflake_database }}"
+    # Politica de reintentos: fallas transitorias de red/warehouse de Snowflake.
+    retry:
+      type: constant
+      maxAttempts: 3
+      interval: PT10S
+    beforeCommands:
+      - pip install -q --no-cache-dir snowflake-connector-python
+    commands:
+      - >-
+        python load_raw_f104.py
+        --csv f104_ventas_46_ramas.csv
+        --modo "{{ inputs.modo }}"
+        --reemplazar-raw "{{ inputs.reemplazar_raw }}"
+        --fecha-ref "{{ trigger.date ?? execution.startDate }}"
+
+errors:
+  - id: log_error
+    type: io.kestra.plugin.core.log.Log
+    level: ERROR
+    message: "Fallo la ingesta F104 para {{ trigger.date ?? execution.startDate }} tras los reintentos."
+
+triggers:
+  - id: mensual_dia_15
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 15 * *"
+    timezone: America/Guayaquil
+    inputs:
+      modo: incremental
+      reemplazar_raw: false
+    # Backfill historico: desde la UI de Kestra (Triggers -> Backfill executions) elige un rango de
+    # fechas y cada ejecucion recibira su propia trigger.date. Para backfill automatico al
+    # desplegar, descomenta:
+    # backfill:
+    #   start: 2015-02-15T06:00:00-05:00

@@ -1,0 +1,153 @@
+# PSet #2 - Infraestructura local: Kestra (orquestacion) + cluster Spark (OBT) + dbt Core (jobs).
+# Snowflake es el destino y vive en la nube: se configura via .env (ver .env.example).
+#
+#   docker compose up -d                          -> Postgres + Kestra + Spark master + worker
+#   docker compose --profile jobs run --rm dbt build   -> dbt Core en contenedor
+#   docker compose --profile jobs run --rm spark-submit -> job PySpark de la OBT en el cluster
+
+x-snowflake-env: &snowflake-env
+  SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+  SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+  SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+  SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE:-ACCOUNTADMIN}
+  SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-COMPUTE_WH}
+  SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-PSET2_DB}
+
+services:
+  # ---------------------------------------------------------------- Kestra
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: k3str4
+    volumes:
+      - datos_postgres:/var/lib/postgresql
+    networks: [pset2_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kestra -d kestra"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  kestra:
+    image: kestra/kestra:v2.0.7
+    user: "root"
+    command: server standalone
+    volumes:
+      - datos_kestra:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/kestra-wd:/tmp/kestra-wd
+    environment:
+      # Variables con prefijo ENV_ quedan disponibles en los flows como {{ envs.<nombre_en_minuscula> }}
+      ENV_SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+      ENV_SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      ENV_SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      ENV_SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE:-ACCOUNTADMIN}
+      ENV_SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-COMPUTE_WH}
+      ENV_SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-PSET2_DB}
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: k3str4
+        kestra:
+          server:
+            basic-auth:
+              username: admin@kestra.io
+              password: Admin1234
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: "/app/storage"
+          queue:
+            type: postgres
+          tasks:
+            tmp-dir:
+              path: /tmp/kestra-wd/tmp
+          url: http://localhost:${KESTRA_PORT:-8080}/
+    ports:
+      - "${KESTRA_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [pset2_net]
+
+  # ----------------------------------------------------------------- Spark
+  spark-master:
+    image: apache/spark:3.5.3
+    container_name: spark-master
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark-master --port 7077 --webui-port 8081
+    ports:
+      - "8081:8081"   # Master Web UI
+      - "7077:7077"   # Master RPC
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    networks: [pset2_net]
+
+  spark-worker:
+    image: apache/spark:3.5.3
+    container_name: spark-worker
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077 --webui-port 8082 --cores 2 --memory 2g
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8082"   # Worker Web UI
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    networks: [pset2_net]
+
+  # Job de la OBT: se ejecuta bajo demanda (profile "jobs"), no queda levantado.
+  spark-submit:
+    image: apache/spark:3.5.3
+    profiles: ["jobs"]
+    user: root
+    depends_on:
+      - spark-master
+      - spark-worker
+    working_dir: /opt/spark-apps
+    volumes:
+      - ./spark:/opt/spark-apps
+    environment:
+      <<: *snowflake-env
+      SPARK_MASTER_URL: spark://spark-master:7077
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        /opt/spark/bin/spark-submit
+        --master spark://spark-master:7077
+        --conf spark.driver.host=$$(hostname -i)
+        --conf spark.jars.ivy=/tmp/.ivy2
+        --packages net.snowflake:spark-snowflake_2.12:3.2.3-spark_3.5
+        /opt/spark-apps/build_obt.py
+    networks: [pset2_net]
+
+  # ------------------------------------------------------------------- dbt
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-snowflake:1.9.latest
+    profiles: ["jobs"]
+    working_dir: /usr/app
+    volumes:
+      - ./dbt:/usr/app
+    environment:
+      <<: *snowflake-env
+      DBT_PROFILES_DIR: /usr/app
+    entrypoint: ["dbt"]
+    command: ["--version"]
+    networks: [pset2_net]
+
+networks:
+  pset2_net:
+    driver: bridge
+
+volumes:
+  datos_postgres:
+  datos_kestra:
